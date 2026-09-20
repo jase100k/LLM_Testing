@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no">
+<title>NEON ASTEROIDS</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#050510;font-family:'Courier New',monospace}
+canvas{display:block;width:100%;height:100%}
+#hud{position:fixed;top:0;left:0;width:100%;padding:12px 20px;display:flex;justify-content:space-between;align-items:flex-start;pointer-events:none;z-index:10}
+.hud-box{background:rgba(10,15,30,0.6);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(0,255,255,0.25);border-radius:10px;padding:8px 16px;color:#0ff;font-size:14px;text-shadow:0 0 8px #0ff}
+.hud-box .label{font-size:10px;color:rgba(0,255,255,0.6);letter-spacing:2px;text-transform:uppercase}
+.hud-box .value{font-size:22px;font-weight:bold;margin-top:2px}
+#lives{display:flex;gap:4px;margin-top:6px}
+#lives svg{width:16px;height:20px;fill:none;stroke:#0ff;stroke-width:1.5;filter:drop-shadow(0 0 3px #0ff)}
+#touch{position:fixed;bottom:0;left:0;width:100%;display:flex;justify-content:space-between;align-items:flex-end;padding:16px;z-index:10;pointer-events:none}
+.touch-pad{display:flex;gap:8px;pointer-events:auto}
+.tbtn{width:52px;height:52px;border-radius:50%;border:1.5px solid rgba(0,255,255,0.4);background:rgba(0,255,255,0.08);backdrop-filter:blur(4px);color:#0ff;font-size:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+.tbtn:active{background:rgba(0,255,255,0.25)}
+.tbtn.fire{width:64px;height:64px;font-size:12px;letter-spacing:1px}
+.tbtn.hyp{font-size:10px}
+#screen{position:fixed;top:0;left:0;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:20;background:rgba(5,5,16,0.85);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+#screen.hidden{display:none}
+#screen h1{font-size:clamp(32px,8vw,72px);color:#0ff;text-shadow:0 0 20px #0ff,0 0 60px rgba(0,255,255,0.3);letter-spacing:8px;margin-bottom:8px}
+#screen h2{font-size:14px;color:rgba(255,255,255,0.5);letter-spacing:4px;margin-bottom:30px}
+#screen .btn{pointer-events:auto;padding:12px 40px;font-family:inherit;font-size:16px;letter-spacing:3px;color:#0ff;background:rgba(0,255,255,0.08);border:1.5px solid rgba(0,255,255,0.5);border-radius:6px;cursor:pointer;text-transform:uppercase;transition:all .2s}
+#screen .btn:hover{background:rgba(0,255,255,0.2);box-shadow:0 0 20px rgba(0,255,255,0.3)}
+#screen .stats{margin-bottom:24px;color:rgba(255,255,255,0.7);font-size:16px;text-align:center;line-height:1.8}
+#screen .stats span{color:#ff0;font-size:24px;text-shadow:0 0 10px rgba(255,255,0,0.5)}
+#scanlines{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:5;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.08) 2px,rgba(0,0,0,0.08) 4px)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="scanlines"></div>
+<div id="hud" style="display:none">
+<div class="hud-box"><div class="label">Score</div><div class="value" id="score">0</div><div id="lives"></div></div>
+<div class="hud-box"><div class="label">High Score</div><div class="value" id="hiscore">0</div></div>
+<div class="hud-box"><div class="label">Sector</div><div class="value" id="sector">1</div></div>
+</div>
+<div id="touch" style="display:none">
+<div class="touch-pad">
+<div class="tbtn" id="t-left">&#9664;</div>
+<div class="tbtn" id="t-right">&#9654;</div>
+</div>
+<div class="touch-pad">
+<div class="tbtn hyp" id="t-hyp">HYP</div>
+<div class="tbtn fire" id="t-fire">FIRE</div>
+<div class="tbtn" id="t-thrust">&#9650;</div>
+</div>
+</div>
+<div id="screen">
+<h1>ASTEROIDS</h1>
+<h2>NEON EDITION</h2>
+<div class="stats" id="stats"></div>
+<button class="btn" id="btn-start">START</button>
+</div>
+<script>
+// === CONSTANTS ===
+const TAU=Math.PI*2;
+const COLORS={ship:'#00ffff',asteroid:['#ff4488','#ffcc00','#44ff88'],laser:'#fff',explosion:'#ffaa00'};
+const PHYSICS={thrust:0.12,rotSpeed:0.065,drag:0.995,laserSpeed:7,laserLife:80,fireCooldown:8,hyperCooldown:300,invulnTime:150};
+const ASTEROID={large:{r:42,speed:1.2,score:20},medium:{r:24,speed:2.0,score:50},small:{r:12,speed:3.0,score:100}};
+
+// === UTILS ===
+const rand=(a,b)=>a+Math.random()*(b-a);
+const randInt=(a,b)=>Math.floor(rand(a,b+1));
+const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+const wrap=(obj,w,h)=>{if(obj.x<-obj.r)obj.x+=w+obj.r*2;if(obj.x>w+obj.r)obj.x-=w+obj.r*2;if(obj.y<-obj.r)obj.y+=h+obj.r*2;if(obj.y>h+obj.r)obj.y-=h+obj.r*2};
+const lerp=(a,b,t)=>a+(b-a)*t;
+
+// === CANVAS SETUP ===
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
+let W,H;
+function resize(){W=canvas.width=window.innerWidth;H=canvas.height=window.innerHeight}
+window.addEventListener('resize',resize);
+resize();
+
+// === STATE ===
+let state='START'; // START, PLAY, OVER
+let score=0,highScore=parseInt(localStorage.getItem('neonAstHS')||'0');
+let sector=1,lives=3,ship=null,asteroids=[],lasers=[],particles=[],popups=[];
+let sectorClearTimer=0;
+
+// === STARFIELD ===
+const stars=[];
+function initStars(){stars.length=0;for(let i=0;i<200;i++)stars.push({x:Math.random()*W,y:Math.random()*H,z:rand(0.3,1),twinkle:rand(0,TAU),speed:rand(0.5,1.5)})}
+initStars();
+function updateStars(){for(const s of stars){s.y+=s.speed*0.3*s.z;if(s.y>H)s.y-=H;s.twinkle+=0.03}}
+function drawStars(){for(const s of stars){const a=0.3+0.7*Math.abs(Math.sin(s.twinkle))*s.z;ctx.fillStyle=`rgba(255,255,255,${a*0.6})`;const sz=s.z*1.5;ctx.fillRect(s.x,s.y,sz,sz)}}
+
+// === PARTICLES ===
+function spawnParticles(x,y,count,color,speed=3,life=40){for(let i=0;i<count;i++){const a=rand(0,TAU),sp=rand(0.5,speed);particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life,maxLife:life,color,size:rand(1,3)})}}
+function spawnPopup(x,y,text){popups.push({x,y,text,life:50})}
+function updateParticles(){for(let i=particles.length-1;i>=0;i--){const p=particles[i];p.x+=p.vx;p.y+=p.vy;p.vx*=0.97;p.vy*=0.97;p.life--;if(p.life<=0)particles.splice(i,1)}}
+function drawParticles(){for(const p of particles){const a=p.life/p.maxLife;ctx.globalAlpha=a;ctx.fillStyle=p.color;ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size)}ctx.globalAlpha=1}
+function updatePopups(){for(let i=popups.length-1;i>=0;i--){const p=popups[i];p.y-=0.8;p.life--;if(p.life<=0)popups.splice(i,1)}}
+function drawPopups(){for(const p of popups){const a=Math.min(1,p.life/20);ctx.globalAlpha=a;ctx.fillStyle='#ff0';ctx.font='bold 16px Courier New';ctx.textAlign='center';ctx.shadowColor='#ff0';ctx.shadowBlur=8;ctx.fillText(p.text,p.x,p.y);ctx.shadowBlur=0}ctx.globalAlpha=1}
+
+// === SHIP ===
+function createShip(){return{x:W/2,y:H/2,vx:0,vy:0,angle:-Math.PI/2,r:12,fireCd:0,hyperCd:0,invuln:PHYSICS.invulnTime,thrusting:false,alive:true}}
+function drawShip(){if(!ship||!ship.alive)return;const blink=ship.invuln>0&&Math.floor(ship.invuln/4)%2===0;if(blink)return;
+ctx.save();ctx.translate(ship.x,ship.y);ctx.rotate(ship.angle);
+ctx.strokeStyle=COLORS.ship;ctx.lineWidth=1.5;ctx.shadowColor=COLORS.ship;ctx.shadowBlur=12;
+ctx.beginPath();ctx.moveTo(14,0);ctx.lineTo(-10,8);ctx.lineTo(-6,0);ctx.lineTo(-10,-8);ctx.closePath();ctx.stroke();ctx.restore()}
+function drawThrust(){if(!ship||!ship.thrusting||Math.random()>0.7)return;const ex=ship.x-Math.cos(ship.angle)*10,ey=ship.y-Math.sin(ship.angle)*10;spawnParticles(ex,ey,2,Math.random()>0.5?'#ff8800':'#ffcc00',2,15)}
+function updateShip(){if(!ship||!ship.alive)return;ship.angle+=keyLeft?-PHYSICS.rotSpeed:0;ship.angle+=keyRight?PHYSICS.rotSpeed:0;
+if(keyThrust){ship.vx+=Math.cos(ship.angle)*PHYSICS.thrust;ship.vy+=Math.sin(ship.angle)*PHYSICS.thrust;ship.thrusting=true;drawThrust()}else ship.thrusting=false;
+ship.vx*=PHYSICS.drag;ship.vy*=PHYSICS.drag;ship.x+=ship.vx;ship.y+=ship.vy;wrap(ship,W,H);
+ship.fireCd=Math.max(0,ship.fireCd-1);ship.hyperCd=Math.max(0,ship.hyperCd-1);ship.invuln=Math.max(0,ship.invuln-1)}
+
+// === ASTEROIDS ===
+function makePoly(r){const pts=[];const n=randInt(8,12);for(let i=0;i<n;i++){const a=i/n*TAU;const rad=r*rand(0.7,1.2);pts.push({x:Math.cos(a)*rad,y:Math.sin(a)*rad})}return pts}
+function createAsteroid(x,y,size,vel){const cfg=ASTEROID[size];const a=rand(0,TAU);const sp=cfg.speed*rand(0.5,1.5)*(1+sector*0.15);
+return{x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,angle:rand(0,TAU),rotSpeed:rand(-0.03,0.03),r:cfg.r,size,poly:makePoly(cfg.r),color:COLORS.asteroid[Object.keys(ASTEROID).indexOf(size)%3]}}
+function drawAsteroid(a){ctx.save();ctx.translate(a.x,a.y);ctx.rotate(a.angle);
+ctx.strokeStyle=a.color;ctx.lineWidth=1.5;ctx.shadowColor=a.color;ctx.shadowBlur=8;
+ctx.beginPath();ctx.moveTo(a.poly[0].x,a.poly[0].y);for(let i=1;i<a.poly.length;i++)ctx.lineTo(a.poly[i].x,a.poly[i].y);ctx.closePath();ctx.stroke();ctx.restore()}
+function updateAsteroids(){for(const a of asteroids){a.x+=a.vx;a.y+=a.vy;a.angle+=a.rotSpeed;wrap(a,W,H)}}
+function splitAsteroid(a,idx){asteroids.splice(idx,1);
+if(a.size==='large'){asteroids.push(createAsteroid(a.x,a.y,'medium',a));asteroids.push(createAsteroid(a.x,a.y,'medium',a))}
+else if(a.size==='medium'){asteroids.push(createAsteroid(a.x,a.y,'small',a));asteroids.push(createAsteroid(a.x,a.y,'small',a))}
+score+=ASTEROID[a.size].score;spawnPopup(a.x,a.y,'+'+ASTEROID[a.size].score);
+spawnParticles(a.x,a.y,a.size==='large'?25:a.size==='medium'?15:8,a.color,4,30);
+playExplosion(a.size)}
+function spawnWave(){asteroids=[];const count=3+Math.floor(sector*1.5);for(let i=0;i<count;i++){let x,y;do{x=rand(0,W);y=rand(0,H)}while(ship&&dist({x,y},ship)<150);asteroids.push(createAsteroid(x,y,'large',{x:0,y:0}))}}
+
+// === LASERS ===
+function fireLaser(){if(!ship||!ship.alive||ship.fireCd>0)return;ship.fireCd=PHYSICS.fireCooldown;
+const lx=ship.x+Math.cos(ship.angle)*14,ly=ship.y+Math.sin(ship.angle)*14;
+lasers.push({x:lx,y:ly,vx:Math.cos(ship.angle)*PHYSICS.laserSpeed+ship.vx*0.3,vy:Math.sin(ship.angle)*PHYSICS.laserSpeed+ship.vy*0.3,life:PHYSICS.laserLife,r:3});
+playLaser()}
+function updateLasers(){for(let i=lasers.length-1;i>=0;i--){const l=lasers[i];l.x+=l.vx;l.y+=l.vy;l.life--;wrap(l,W,H,1);if(l.life<=0)lasers.splice(i,1)}}
+function drawLasers(){ctx.strokeStyle=COLORS.laser;ctx.lineWidth=2;ctx.shadowColor='#fff';ctx.shadowBlur=6;
+for(const l of lasers){ctx.beginPath();ctx.moveTo(l.x,l.y);ctx.lineTo(l.x-l.vx*2,l.y-l.vy*2);ctx.stroke()}ctx.shadowBlur=0}
+
+// === AUDIO ===
+let audioCtx=null;
+function initAudio(){if(!audioCtx)audioCtx=new(window.AudioContext||window.webkitAudioContext)()}
+function playLaser(){if(!audioCtx)return;const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.type='sawtooth';o.frequency.setValueAtTime(800,audioCtx.currentTime);o.frequency.exponentialRampToValueAtTime(200,audioCtx.currentTime+0.1);g.gain.setValueAtTime(0.15,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.1);o.connect(g).connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+0.1)}
+function playExplosion(size){if(!audioCtx)return;const dur=size==='large'?0.4:size==='medium'?0.25:0.15;const buf=audioCtx.createBuffer(1,audioCtx.sampleRate*dur,audioCtx.sampleRate);const d=buf.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2);const s=audioCtx.createBufferSource();s.buffer=buf;const f=audioCtx.createBiquadFilter();f.type='lowpass';f.frequency.value=size==='large'?800:size==='medium'?1500:3000;const g=audioCtx.createGain();g.gain.value=0.3;s.connect(f).connect(g).connect(audioCtx.destination);s.start()}
+function playHyper(){if(!audioCtx)return;const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.type='sine';o.frequency.setValueAtTime(200,audioCtx.currentTime);o.frequency.exponentialRampToValueAtTime(2000,audioCtx.currentTime+0.3);g.gain.setValueAtTime(0.12,audioCtx.currentTime);g.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.3);o.connect(g).connect(audioCtx.destination);o.start();o.stop(audioCtx.currentTime+0.3)}
+let thrusterOsc=null,thrusterGain=null;
+function setThrust(on){if(!audioCtx)return;if(on&&!thrusterOsc){thrusterOsc=audioCtx.createOscillator();thrusterGain=audioCtx.createGain();thrusterOsc.type='sawtooth';thrusterOsc.frequency.value=55;thrusterGain.gain.value=0.06;const f=audioCtx.createBiquadFilter();f.type='lowpass';f.frequency.value=200;thrusterOsc.connect(f).connect(thrusterGain).connect(audioCtx.destination);thrusterOsc.start()}else if(!on&&thrusterOsc){const os=thrusterOsc,ts=thrusterGain;thrusterOsc=null;thrusterGain=null;ts.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.1);setTimeout(()=>{try{os.stop()}catch(e){}},150)}}
+
+// === HYPERSPACE ===
+function hyperspace(){if(!ship||!ship.alive||ship.hyperCd>0)return;ship.hyperCd=PHYSICS.hyperCooldown;
+spawnParticles(ship.x,ship.y,20,'#a0f',5,30);ship.x=rand(60,W-60);ship.y=rand(60,H-60);
+ship.vx=0;ship.vy=0;ship.invuln=Math.max(ship.invuln,30);spawnParticles(ship.x,ship.y,20,'#a0f',5,30);playHyper()}
+
+// === INPUT ===
+let keyLeft=false,keyRight=false,keyThrust=false,keyFire=false;
+const keys={};
+window.addEventListener('keydown',e=>{keys[e.code]=true;if(e.code==='ShiftLeft'||e.code==='ShiftRight')hyperspace();e.preventDefault()});
+window.addEventListener('keyup',e=>{keys[e.code]=false;e.preventDefault()});
+function pollKeys(){keyLeft=!!(keys['ArrowLeft']||keys['KeyA']);keyRight=!!(keys['ArrowRight']||keys['KeyD']);keyThrust=!!(keys['ArrowUp']||keys['KeyW']);keyFire=!!keys['Space']}
+// Touch
+const tBtns={left:'t-left',right:'t-right',thrust:'t-thrust',fire:'t-fire',hyp:'t-hyp'};
+function bindTouch(id,down,up){const el=document.getElementById(id);el.addEventListener('touchstart',e=>{e.preventDefault();down()},{passive:false});el.addEventListener('touchend',e=>{e.preventDefault();up()},{passive:false})}
+bindTouch('t-left',()=>keyLeft=true,()=>keyLeft=false);
+bindTouch('t-right',()=>keyRight=true,()=>keyRight=false);
+bindTouch('t-thrust',()=>keyThrust=true,()=>keyThrust=false);
+bindTouch('t-fire',()=>keyFire=true,()=>keyFire=false);
+bindTouch('t-hyp',()=>hyperspace(),()=>{});
+
+// === GAME LOOP ===
+function startGame(){score=0;lives=3;sector=1;ship=createShip();lasers=[];particles=[];popups=[];spawnWave();state='PLAY';
+document.getElementById('screen').classList.add('hidden');document.getElementById('hud').style.display='flex';document.getElementById('touch').style.display='flex';updateHUD()}
+function gameOver(){state='OVER';ship.alive=false;
+if(score>highScore){highScore=score;localStorage.setItem('neonAstHS',highScore)}
+setTimeout(()=>{const scr=document.getElementById('screen');scr.classList.remove('hidden');
+scr.querySelector('h1').textContent='GAME OVER';scr.querySelector('h2').textContent='';
+document.getElementById('stats').innerHTML=`SCORE <span>${score}</span><br>SECTOR ${sector} | HIGH ${highScore}`;
+document.getElementById('btn-start').textContent='PLAY AGAIN'},800);
+setThrust(false)}
+function updateHUD(){document.getElementById('score').textContent=score;document.getElementById('sector').textContent=sector;
+document.getElementById('hiscore').textContent=highScore;
+const livesEl=document.getElementById('lives');livesEl.innerHTML='';for(let i=0;i<lives;i++){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 16 20');svg.innerHTML='<path d="M8 2L3 16L8 13L13 16Z"/>';livesEl.appendChild(svg)}}
+function checkCollisions(){if(!ship||!ship.alive)return;
+// laser-asteroid
+for(let i=lasers.length-1;i>=0;i--)for(let j=asteroids.length-1;j>=0;j--){if(dist(lasers[i],asteroids[j])<asteroids[j].r){lasers.splice(i,1);splitAsteroid(asteroids[j],j);break}}
+// ship-asteroid
+if(ship.invuln<=0)for(const a of asteroids){if(dist(ship,a)<a.r+ship.r*0.7){shipHit();break}}}
+function shipHit(){lives--;setThrust(false);spawnParticles(ship.x,ship.y,30,'#0ff',4,40);playExplosion('large');
+ship.alive=false;updateHUD();
+if(lives<=0)gameOver();else setTimeout(()=>{ship=createShip();updateHUD()},600)}
+function nextSector(){sector++;sectorClearTimer=60;spawnWave();updateHUD()}
+
+function update(){pollKeys();updateStars();
+if(state==='PLAY'){
+updateShip();updateAsteroids();updateLasers();checkCollisions();
+if(keyFire&&ship&&ship.alive)fireLaser();
+setThrust(keyThrust&&ship&&ship.alive);
+// sector clear check
+if(asteroids.length===0&&sectorClearTimer<=0){sectorClearTimer=60}
+else if(asteroids.length===0&&sectorClearTimer>0){sectorClearTimer--;if(sectorClearTimer===0)nextSector()}
+else sectorClearTimer=0;
+}
+updateParticles();updatePopups()}
+
+function draw(){ctx.clearRect(0,0,W,H);drawStars();
+if(state==='PLAY'||state==='OVER'){
+for(const a of asteroids)drawAsteroid(a);
+drawLasers();drawShip();drawParticles();drawPopups()}}
+
+function loop(){update();draw();requestAnimationFrame(loop)}
+loop();
+
+// === UI BUTTONS ===
+document.getElementById('btn-start').addEventListener('click',()=>{initAudio();if(audioCtx.state==='suspended')audioCtx.resume();startGame()});
+// Auto-show touch on mobile
+if('ontouchstart'in window)document.getElementById('touch').style.display='flex';
+</script>
+</body>
+</html>
