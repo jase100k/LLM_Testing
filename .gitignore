@@ -1,0 +1,45 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+env.bak/
+venv.bak/
+
+# Large Model weights & checkpoints (Prevent git bloat)
+models/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.gguf
+*.onnx
+
+# Hugging Face caches & download state
+.cache/
+hf_home/
+*.download
+*.incomplete
+
+# Logs & databases
+*.log
+*.sqlite3
+
+# Environment & sensitive credentials
+.env
+.env.*
+*.pem
+*.key
+*token*
+
+# Operating System & IDEs
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
